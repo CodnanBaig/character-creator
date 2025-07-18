@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     const formData: FormData = await request.json()
 
     // Construct the prompt for character generation
-    const prompt = `Create a detailed character persona based on the following information:
+    const prompt = `Create a detailed character for a story with these details:
 
 Name: ${formData.name}
 Age: ${formData.age}
@@ -25,17 +25,21 @@ Goal: ${formData.goal}
 Flaw: ${formData.flaw}
 Setting: ${formData.setting}
 
-Please provide a comprehensive character profile with the following sections:
+Write a complete character profile with exactly these 4 sections:
 
-1. BACKSTORY: A rich 2-3 paragraph backstory that explains how this character became who they are today. Include key life events, relationships, and experiences that shaped them.
+1. BACKSTORY
+Write 2-3 detailed paragraphs about ${formData.name}'s life story. Include their childhood, key events that shaped them, important relationships, and how they became who they are today. Make it specific to their age, occupation, and the ${formData.setting} setting.
 
-2. PERSONALITY TRAITS: A detailed description of their personality, including strengths, weaknesses, quirks, habits, and how they interact with others. Be specific and vivid.
+2. PERSONALITY TRAITS
+Describe ${formData.name}'s personality in detail. Include their strengths, weaknesses, quirks, habits, fears, and how they interact with others. Be specific about what makes them unique and memorable.
 
-3. DIALOGUE STYLE: Describe how this character speaks - their vocabulary, tone, speech patterns, favorite phrases, and communication style. Include any accents or unique speaking habits.
+3. DIALOGUE STYLE
+Explain how ${formData.name} speaks. Describe their vocabulary level, tone, speech patterns, favorite phrases, and communication style. Consider their occupation, age, and personality type.
 
-4. SAMPLE DIALOGUE: Provide 3-4 lines of sample dialogue that demonstrates this character's voice and personality. Show them in a typical conversation or situation.
+4. SAMPLE DIALOGUE
+Write 3-4 lines of dialogue that ${formData.name} would actually say. Show their personality and speaking style in a typical conversation or situation relevant to their goal or setting.
 
-Make the character feel authentic, three-dimensional, and suitable for the ${formData.setting} setting. Focus on making them memorable and engaging for storytelling purposes.`
+Make ${formData.name} feel like a real, three-dimensional person that readers will care about.`
 
     // Call OpenRouter API
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -51,7 +55,7 @@ Make the character feel authentic, three-dimensional, and suitable for the ${for
           {
             role: "system",
             content:
-              "You are a creative writing assistant specializing in character development. Create vivid, detailed character personas that writers can use in their stories. Always provide complete, detailed content for each section. Never return just section headers - always include substantial content.",
+              "You are a creative writing assistant. Generate detailed character profiles with substantial content for each section. Write in a natural, engaging style. Do not repeat instructions or return placeholder text.",
           },
           {
             role: "user",
@@ -70,6 +74,9 @@ Make the character feel authentic, three-dimensional, and suitable for the ${for
     const data = await response.json()
     const generatedText = data.choices[0]?.message?.content || ""
 
+    // Debug: Log the raw response to see what we're getting
+    console.log("Raw AI Response:", generatedText)
+
     // Parse the response into sections
     const sections = parseCharacterResponse(generatedText)
 
@@ -81,7 +88,6 @@ Make the character feel authentic, three-dimensional, and suitable for the ${for
 }
 
 function parseCharacterResponse(text: string) {
-  // Split the response into sections based on numbered headers or keywords
   const sections = {
     backstory: "",
     personalityTraits: "",
@@ -89,50 +95,104 @@ function parseCharacterResponse(text: string) {
     sampleDialogue: "",
   }
 
-  // Try to extract sections using various patterns
-  // Remove unsupported 's' flag from regexes for compatibility with ES2017 and earlier
-  const backstoryMatch = text.match(/(?:1\.|BACKSTORY:?)([\s\S]*?)(?=(?:2\.|PERSONALITY|$))/i)
-  const personalityMatch = text.match(/(?:2\.|PERSONALITY TRAITS?:?)([\s\S]*?)(?=(?:3\.|DIALOGUE STYLE|$))/i)
-  const dialogueStyleMatch = text.match(/(?:3\.|DIALOGUE STYLE:?)([\s\S]*?)(?=(?:4\.|SAMPLE DIALOGUE|$))/i)
-  const sampleDialogueMatch = text.match(/(?:4\.|SAMPLE DIALOGUE:?)([\s\S]*?)$/i)
+  // More robust regex patterns
+  const backstoryMatch = text.match(/1\.\s*BACKSTORY\s*\n([\s\S]*?)(?=\n\s*2\.\s*PERSONALITY|$)/i)
+  const personalityMatch = text.match(/2\.\s*PERSONALITY TRAITS\s*\n([\s\S]*?)(?=\n\s*3\.\s*DIALOGUE|$)/i)
+  const dialogueStyleMatch = text.match(/3\.\s*DIALOGUE STYLE\s*\n([\s\S]*?)(?=\n\s*4\.\s*SAMPLE|$)/i)
+  const sampleDialogueMatch = text.match(/4\.\s*SAMPLE DIALOGUE\s*\n([\s\S]*?)$/i)
 
-  sections.backstory = backstoryMatch ? backstoryMatch[1].trim() : extractFallbackSection(text, "backstory")
-  sections.personalityTraits = personalityMatch
-    ? personalityMatch[1].trim()
-    : extractFallbackSection(text, "personality")
-  sections.dialogueStyle = dialogueStyleMatch
-    ? dialogueStyleMatch[1].trim()
-    : extractFallbackSection(text, "dialogue style")
-  sections.sampleDialogue = sampleDialogueMatch
-    ? sampleDialogueMatch[1].trim()
-    : extractFallbackSection(text, "sample dialogue")
+  // Alternative patterns if the numbered ones don't work
+  const backstoryAlt = text.match(/BACKSTORY\s*:?\s*\n([\s\S]*?)(?=\n\s*PERSONALITY|$)/i)
+  const personalityAlt = text.match(/PERSONALITY TRAITS?\s*:?\s*\n([\s\S]*?)(?=\n\s*DIALOGUE|$)/i)
+  const dialogueAlt = text.match(/DIALOGUE STYLE\s*:?\s*\n([\s\S]*?)(?=\n\s*SAMPLE|$)/i)
+  const sampleAlt = text.match(/SAMPLE DIALOGUE\s*:?\s*\n([\s\S]*?)$/i)
 
-  // If sections are empty, provide fallback content
+  sections.backstory = (backstoryMatch?.[1] || backstoryAlt?.[1] || "").trim()
+  sections.personalityTraits = (personalityMatch?.[1] || personalityAlt?.[1] || "").trim()
+  sections.dialogueStyle = (dialogueStyleMatch?.[1] || dialogueAlt?.[1] || "").trim()
+  sections.sampleDialogue = (sampleDialogueMatch?.[1] || sampleAlt?.[1] || "").trim()
+
+  // If sections are still empty, try to extract meaningful content from the text
+  if (!sections.backstory || sections.backstory.length < 50) {
+    const lines = text.split('\n')
+    const backstoryLines = []
+    let inBackstory = false
+    
+    for (const line of lines) {
+      if (line.toLowerCase().includes('backstory') || line.match(/^\d+\./)) {
+        inBackstory = true
+        continue
+      }
+      if (inBackstory && (line.toLowerCase().includes('personality') || line.match(/^\d+\./))) {
+        break
+      }
+      if (inBackstory && line.trim()) {
+        backstoryLines.push(line.trim())
+      }
+    }
+    
+    if (backstoryLines.length > 0) {
+      sections.backstory = backstoryLines.join(' ')
+    }
+  }
+
+  // Similar fallback for other sections
+  if (!sections.personalityTraits || sections.personalityTraits.length < 30) {
+    const personalityContent = extractSectionContent(text, 'personality')
+    if (personalityContent) {
+      sections.personalityTraits = personalityContent
+    }
+  }
+
+  if (!sections.dialogueStyle || sections.dialogueStyle.length < 30) {
+    const dialogueContent = extractSectionContent(text, 'dialogue style')
+    if (dialogueContent) {
+      sections.dialogueStyle = dialogueContent
+    }
+  }
+
+  if (!sections.sampleDialogue || sections.sampleDialogue.length < 20) {
+    const sampleContent = extractSectionContent(text, 'sample dialogue')
+    if (sampleContent) {
+      sections.sampleDialogue = sampleContent
+    }
+  }
+
+  // Final fallbacks if still empty
   if (!sections.backstory) {
-    sections.backstory = text.substring(0, Math.min(500, text.length)) + "..."
+    sections.backstory = "Unable to generate backstory. Please try again with different character details."
   }
   if (!sections.personalityTraits) {
-    sections.personalityTraits =
-      "A complex individual with unique traits and characteristics that make them memorable and engaging. Their personality reflects their background and experiences, showing both strengths and vulnerabilities that create depth and relatability."
+    sections.personalityTraits = "Unable to generate personality traits. Please try again with different character details."
   }
   if (!sections.dialogueStyle) {
-    sections.dialogueStyle = "Speaks in a distinctive manner that reflects their background and personality."
+    sections.dialogueStyle = "Unable to generate dialogue style. Please try again with different character details."
   }
-  if (!sections.sampleDialogue || sections.sampleDialogue.length < 20) {
-    sections.sampleDialogue = '"This is how I would speak," they said with conviction, their words carrying the weight of their experiences.'
+  if (!sections.sampleDialogue) {
+    sections.sampleDialogue = "Unable to generate sample dialogue. Please try again with different character details."
   }
 
   return sections
 }
 
-function extractFallbackSection(text: string, sectionType: string): string {
-  // Simple fallback extraction based on keywords
-  const lines = text.split("\n")
-  const relevantLines = lines.filter((line) => line.toLowerCase().includes(sectionType.toLowerCase()))
-
-  if (relevantLines.length > 0) {
-    return relevantLines.join("\n").trim()
+function extractSectionContent(text: string, sectionName: string): string {
+  const lines = text.split('\n')
+  const contentLines = []
+  let inSection = false
+  
+  for (const line of lines) {
+    const lowerLine = line.toLowerCase()
+    if (lowerLine.includes(sectionName.toLowerCase()) || line.match(/^\d+\./)) {
+      inSection = true
+      continue
+    }
+    if (inSection && (line.match(/^\d+\./) || lowerLine.includes('backstory') || lowerLine.includes('personality') || lowerLine.includes('dialogue') || lowerLine.includes('sample'))) {
+      break
+    }
+    if (inSection && line.trim()) {
+      contentLines.push(line.trim())
+    }
   }
-
-  return ""
+  
+  return contentLines.join(' ')
 }
